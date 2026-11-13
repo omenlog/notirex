@@ -20,14 +20,13 @@ case "$(uname -m)" in
     ;;
 esac
 
-case "$version" in
-  latest) release="latest" ;;
-  v*) release="$version" ;;
-  *) release="v$version" ;;
-esac
-
 archive="notirex_Darwin_${arch}.tar.gz"
-url="https://github.com/${repo}/releases/download/${release}/${archive}"
+
+case "$version" in
+  latest) url="https://github.com/${repo}/releases/latest/download/${archive}" ;;
+  v*) url="https://github.com/${repo}/releases/download/${version}/${archive}" ;;
+  *) url="https://github.com/${repo}/releases/download/v${version}/${archive}" ;;
+esac
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
