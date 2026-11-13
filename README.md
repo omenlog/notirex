@@ -37,6 +37,21 @@ make build
 
 The executable is written to `bin/notirex`.
 
+## Releases
+
+GoReleaser publishes a GitHub release whenever a tag beginning with `v` is
+pushed. Release tags should use semantic versions, for example:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub Actions release workflow runs the test suite, builds `notirex` for
+macOS on both Intel (AMD64) and Apple Silicon (ARM64), and uploads compressed
+archives plus a `checksums.txt` file to the matching GitHub release. GoReleaser
+does not need to be installed or run locally.
+
 ## Usage
 
 From a terminal inside Rex, session and block context are read from
