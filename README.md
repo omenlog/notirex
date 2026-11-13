@@ -28,6 +28,34 @@ Rex provides the pane border.
 - `rex` must be available through `PATH`, or `NOTIREX_REX_BIN` must point to it.
 - The target session must be supplied through `--session` or `REX_SESSION`.
 
+## Install
+
+Install the latest macOS release into `$HOME/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/omenlog/notirex/main/install.sh | sh
+```
+
+Ensure `$HOME/.local/bin` is on your `PATH`. To install a particular release,
+pass its version to the installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/omenlog/notirex/main/install.sh | sh -s -- v0.1.0
+```
+
+Set `NOTIREX_INSTALL_DIR` to install elsewhere. Releases currently support
+Apple Silicon and Intel Macs.
+
+## Update
+
+Rerun the latest-release install command to replace the installed binary:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/omenlog/notirex/main/install.sh | sh
+```
+
+Use the versioned command above to update or downgrade to a specific release.
+
 ## Build
 
 ```sh
