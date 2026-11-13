@@ -1,4 +1,4 @@
-module notyrex
+module notirex
 
 go 1.24.2
 

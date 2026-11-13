@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"notyrex/internal/rexclient"
+	"notirex/internal/rexclient"
 )
 
 type fakeRex struct {
@@ -93,10 +93,10 @@ func TestUsageOnlyShowsPublicCommands(t *testing.T) {
 		t.Fatalf("status = %d, want 0", status)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "notyrex show") {
+	if !strings.Contains(output, "notirex show") {
 		t.Fatalf("output = %q, want public show command", output)
 	}
-	if strings.Contains(output, "notyrex render") {
+	if strings.Contains(output, "notirex render") {
 		t.Fatalf("output = %q, unexpectedly exposes render command", output)
 	}
 }

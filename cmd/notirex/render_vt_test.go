@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"notyrex/internal/notification"
+	"notirex/internal/notification"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"

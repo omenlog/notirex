@@ -1,9 +1,9 @@
-# notyrex
+# notirex
 
-`notyrex` is a standalone executable for short-lived Rex notifications. It
+`notirex` is a standalone executable for short-lived Rex notifications. It
 creates a non-focused floating pane at the top right of the active Rex window,
 renders a message, waits for its duration, and exits. A new notification
-replaces any existing `notyrex` pane in the same session.
+replaces any existing `notirex` pane in the same session.
 
 It does not require a Rex `init.lua` module, custom action, or configuration
 reload. The executable invokes the public `rex` CLI and server API directly.
@@ -25,7 +25,7 @@ Rex provides the pane border.
 ## Requirements
 
 - The `rex` CLI must be installed and able to connect to the target Rex server.
-- `rex` must be available through `PATH`, or `NOTYREX_REX_BIN` must point to it.
+- `rex` must be available through `PATH`, or `NOTIREX_REX_BIN` must point to it.
 - The target session must be supplied through `--session` or `REX_SESSION`.
 
 ## Build
@@ -35,7 +35,7 @@ make test
 make build
 ```
 
-The executable is written to `bin/notyrex`.
+The executable is written to `bin/notirex`.
 
 ## Usage
 
@@ -43,15 +43,15 @@ From a terminal inside Rex, session and block context are read from
 `REX_SESSION` and `REX_BLOCK`:
 
 ```sh
-./bin/notyrex show --message "Build completed"
-./bin/notyrex show --kind warning --message "Tests were skipped" --duration 4s
-./bin/notyrex show --kind error --message "Deployment failed"
+./bin/notirex show --message "Build completed"
+./bin/notirex show --kind warning --message "Tests were skipped" --duration 4s
+./bin/notirex show --kind error --message "Deployment failed"
 ```
 
 From another process, pass the target explicitly:
 
 ```sh
-./bin/notyrex show \
+./bin/notirex show \
   --session "session:..." \
   --block "block:..." \
   --kind ok \
@@ -60,7 +60,7 @@ From another process, pass the target explicitly:
 
 `--block` is optional. It provides a reference terminal for calculating the
 active window's cell grid. If it is omitted or is not in the active window,
-`notyrex` uses that window's focused terminal. It falls back to a conservative
+`notirex` uses that window's focused terminal. It falls back to a conservative
 `120x40` grid when no usable terminal size is available.
 
 Successful creation prints the layer information as JSON:
@@ -75,19 +75,19 @@ Successful creation prints the layer information as JSON:
 | --- | --- |
 | `REX_SESSION` | Default target session |
 | `REX_BLOCK` | Default reference terminal block |
-| `NOTYREX_REX_BIN` | Alternative path to the `rex` executable |
+| `NOTIREX_REX_BIN` | Alternative path to the `rex` executable |
 
 ## How it works
 
-`notyrex show` performs the complete integration itself:
+`notirex show` performs the complete integration itself:
 
 1. Inspects the target session with `rex session inspect`.
 2. Finds the session's active window and a reference terminal block.
 3. Measures the rendered notification in terminal cells.
 4. Converts those cells into Rex's normalized floating-layer bounds.
-5. Closes any existing floating layer containing a block labelled `notyrex`.
+5. Closes any existing floating layer containing a block labelled `notirex`.
 6. Calls `session.new_layer` through `rex api call`.
-7. Starts `notyrex render` inside the new terminal layer.
+7. Starts `notirex render` inside the new terminal layer.
 
 The creator passes the calculated layer grid to the renderer, which centers each
 line using cursor positioning. It deliberately avoids querying the terminal at
@@ -115,7 +115,7 @@ custom action can run:
 
 ```lua
 rex.exec({
-  "/path/to/notyrex",
+  "/path/to/notirex",
   "show",
   "--session", ctx.session_id,
   "--block", ctx.block_id,

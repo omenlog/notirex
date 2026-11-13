@@ -150,9 +150,9 @@ func TestNewLayerBuildsTerminalLayout(t *testing.T) {
 	result, err := client.NewLayer("session:1", NewLayerRequest{
 		WindowID:   "window:1",
 		Bounds:     [4]float64{0.8, 0.02, 0.18, 0.1},
-		Executable: "/tmp/notyrex",
+		Executable: "/tmp/notirex",
 		Arguments:  []string{"render", "--message", "saved"},
-		Label:      "notyrex",
+		Label:      "notirex",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -178,10 +178,10 @@ func TestNewLayerBuildsTerminalLayout(t *testing.T) {
 	block := layout["block"].(map[string]any)
 	options := block["options"].(map[string]any)
 	command := options["command"].([]any)
-	if command[0] != "/tmp/notyrex" || command[1] != "render" {
+	if command[0] != "/tmp/notirex" || command[1] != "render" {
 		t.Fatalf("command = %#v", command)
 	}
-	if request["focus"] != false || block["label"] != "notyrex" {
+	if request["focus"] != false || block["label"] != "notirex" {
 		t.Fatalf("request = %#v", request)
 	}
 	if options["shell"] != "none" || options["login"] != false {

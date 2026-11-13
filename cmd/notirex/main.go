@@ -11,13 +11,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"notyrex/internal/notification"
-	"notyrex/internal/rexclient"
+	"notirex/internal/notification"
+	"notirex/internal/rexclient"
 )
 
 const (
 	defaultDuration   = 2 * time.Second
-	notificationLabel = "notyrex"
+	notificationLabel = "notirex"
 
 	referenceColumns   = 120
 	referenceRows      = 40
@@ -55,7 +55,7 @@ func app(args []string, stdout, stderr io.Writer, newRex func(string) rexAPI) in
 		if status != 0 || options.help {
 			return status
 		}
-		rexBinary := firstNonEmpty(options.rexBinary, os.Getenv("NOTYREX_REX_BIN"), "rex")
+		rexBinary := firstNonEmpty(options.rexBinary, os.Getenv("NOTIREX_REX_BIN"), "rex")
 		rexAPI := newRex(rexBinary)
 
 		return runShow(options, stdout, stderr, rexAPI)
@@ -87,13 +87,13 @@ func runShow(options options, stdout, stderr io.Writer, client rexAPI) int {
 
 	executable, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(stderr, "find notyrex executable: %v\n", err)
+		fmt.Fprintf(stderr, "find notirex executable: %v\n", err)
 		return 1
 	}
 	if !filepath.IsAbs(executable) {
 		executable, err = filepath.Abs(executable)
 		if err != nil {
-			fmt.Fprintf(stderr, "resolve notyrex executable: %v\n", err)
+			fmt.Fprintf(stderr, "resolve notirex executable: %v\n", err)
 			return 1
 		}
 	}
@@ -205,7 +205,7 @@ func parseOptions(command string, args []string, stderr io.Writer) (options, int
 		flags.StringVar(&result.sessionID, "s", "", "target Rex session (shorthand)")
 		flags.StringVar(&result.blockID, "block", "", "reference Rex block (defaults to REX_BLOCK)")
 		flags.StringVar(&result.blockID, "b", "", "reference Rex block (shorthand)")
-		flags.StringVar(&result.rexBinary, "rex-bin", "", "rex executable (defaults to NOTYREX_REX_BIN or rex)")
+		flags.StringVar(&result.rexBinary, "rex-bin", "", "rex executable (defaults to NOTIREX_REX_BIN or rex)")
 	case "render":
 		flags.IntVar(&result.columns, "columns", 0, "fallback terminal columns")
 		flags.IntVar(&result.rows, "rows", 0, "fallback terminal rows")
@@ -391,5 +391,5 @@ func firstNonEmpty(values ...string) string {
 
 func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "usage:")
-	fmt.Fprintln(writer, "  notyrex show --message TEXT [--kind ok|warning|error] [--duration 2s] [--session SESSION] [--block BLOCK]")
+	fmt.Fprintln(writer, "  notirex show --message TEXT [--kind ok|warning|error] [--duration 2s] [--session SESSION] [--block BLOCK]")
 }
