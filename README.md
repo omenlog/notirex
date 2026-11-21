@@ -9,6 +9,10 @@ invoke the `rex` CLI, create a terminal, or require Lip Gloss. Rex can still be
 the consumer that launches `notirex`, but the notification itself is an
 independent native application.
 
+## Showcase
+
+https://github.com/user-attachments/assets/e778221d-89d0-4634-8d20-469bef8939ed
+
 ## Behavior
 
 | Property | Value |
