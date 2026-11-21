@@ -4,34 +4,57 @@ import (
 	"strings"
 	"testing"
 	"unicode"
-
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"unicode/utf8"
 )
 
 func TestNewAcceptsSupportedKinds(t *testing.T) {
-	for _, kind := range []string{"ok", "warning", "error", "OK"} {
-		notice, err := New(kind, "message")
+	tests := []struct {
+		value string
+		want  Kind
+	}{
+		{value: "ok", want: KindOK},
+		{value: "warning", want: KindWarning},
+		{value: "error", want: KindError},
+		{value: "neutral", want: KindNeutral},
+		{value: "info", want: KindInformation},
+		{value: " INFO ", want: KindInformation},
+	}
+
+	for _, test := range tests {
+		notice, err := New(test.value, "message", "bottom-left")
 		if err != nil {
-			t.Fatalf("New(%q): %v", kind, err)
+			t.Fatalf("New(%q): %v", test.value, err)
 		}
-		if notice.Message != "message" {
-			t.Fatalf("New(%q) message = %q", kind, notice.Message)
+		if notice.Kind != test.want {
+			t.Fatalf("New(%q) kind = %q, want %q", test.value, notice.Kind, test.want)
 		}
 	}
 }
 
+func TestParsePosition(t *testing.T) {
+	position, err := ParsePosition(" TOP-RIGHT ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if position != TopRight {
+		t.Fatalf("position = %q, want %q", position, TopRight)
+	}
+}
+
 func TestNewRejectsInvalidInput(t *testing.T) {
-	if _, err := New("success", "message"); err == nil {
+	if _, err := New("success", "message", "bottom-left"); err == nil {
 		t.Fatal("New accepted an unsupported kind")
 	}
-	if _, err := New("ok", " \n\t "); err == nil {
+	if _, err := New("ok", "message", "center"); err == nil {
+		t.Fatal("New accepted an unsupported position")
+	}
+	if _, err := New("ok", " \n\t ", "bottom-left"); err == nil {
 		t.Fatal("New accepted an empty message")
 	}
 }
 
 func TestNewSanitizesControlCharacters(t *testing.T) {
-	notice, err := New("warning", "  one\r\ntwo\x1b[31m\tthree  ")
+	notice, err := New("warning", "  one\r\ntwo\x1b[31m\tthree  ", "bottom-left")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,87 +63,68 @@ func TestNewSanitizesControlCharacters(t *testing.T) {
 	}
 }
 
-func TestRenderWrapsLongMessages(t *testing.T) {
-	notice, err := New("ok", strings.Repeat("word ", 30))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	columns, rows := notice.Size()
-	if columns > maxMessageWidth+4 {
-		t.Fatalf("columns = %d, expected wrapped output", columns)
-	}
-	if rows <= 1 {
-		t.Fatalf("rows = %d, expected multiple content lines", rows)
-	}
-}
-
-func TestRenderCentered(t *testing.T) {
+func TestAppearanceForEveryKind(t *testing.T) {
 	tests := []struct {
-		name    string
-		message string
-		columns int
-		rows    int
-		cursor  string
+		kind  Kind
+		icon  string
+		color string
 	}{
-		{name: "odd dimensions", message: "saved", columns: 20, rows: 5, cursor: "\x1b[3;6H"},
-		{name: "even dimensions", message: "saved", columns: 21, rows: 4, cursor: "\x1b[2;7H"},
-		{name: "narrow terminal", message: "saved", columns: 2, rows: 1, cursor: "\x1b[1;1H"},
-		{name: "multiple lines", message: "one\ntwo", columns: 12, rows: 4, cursor: "\x1b[2;3H"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			notice, err := New("ok", test.message)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			rendered := notice.RenderCentered(test.columns, test.rows)
-			if !strings.Contains(rendered, test.cursor) {
-				t.Fatalf("centered notification has wrong cursor position: %q", rendered)
-			}
-			if !strings.Contains(rendered, strings.Split(test.message, "\n")[0]) {
-				t.Fatalf("centered notification does not contain message: %q", rendered)
-			}
-		})
-	}
-}
-
-func TestRenderUsesAppearanceForEveryKind(t *testing.T) {
-	tests := []struct {
-		kind Kind
-		icon string
-	}{
-		{kind: KindOK, icon: "✓"},
-		{kind: KindWarning, icon: "!"},
-		{kind: KindError, icon: "✕"},
+		{kind: KindOK, icon: "✓", color: "#22C55E"},
+		{kind: KindWarning, icon: "!", color: "#EAB308"},
+		{kind: KindError, icon: "✕", color: "#EF4444"},
+		{kind: KindNeutral, icon: "", color: "#FFFFFF"},
+		{kind: KindInformation, icon: "i", color: "#3767ff"},
 	}
 
 	for _, test := range tests {
 		t.Run(string(test.kind), func(t *testing.T) {
-			notice, err := New(string(test.kind), "message")
+			notice, err := New(string(test.kind), "message", "bottom-left")
 			if err != nil {
 				t.Fatal(err)
 			}
-			plain := ansi.Strip(notice.Render())
-			if plain != " "+test.icon+" message " {
-				t.Fatalf("plain render = %q", plain)
+			look := notice.Appearance()
+			if look.Icon != test.icon || look.Color != test.color {
+				t.Fatalf("appearance = %+v", look)
 			}
 		})
 	}
 }
 
-func TestEveryWrappedLineFitsMaximumWidth(t *testing.T) {
-	notice, err := New("ok", strings.Repeat("abcdefghij ", 40))
+func TestDisplayMessageWrapsLongMessages(t *testing.T) {
+	notice, err := New("ok", strings.Repeat("abcdefghij ", 20), "bottom-left")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for index, line := range strings.Split(notice.Render(), "\n") {
-		if width := lipgloss.Width(line); width > maxMessageWidth+4 {
-			t.Fatalf("line %d width = %d, want at most %d", index+1, width, maxMessageWidth+4)
+	lines := strings.Split(notice.DisplayMessage(), "\n")
+	if len(lines) <= 1 {
+		t.Fatal("long message was not wrapped")
+	}
+	for index, line := range lines {
+		if width := utf8.RuneCountInString(line); width > MaxLineRunes {
+			t.Fatalf("line %d has %d runes, want at most %d", index+1, width, MaxLineRunes)
 		}
+	}
+}
+
+func TestDisplayMessagePreservesExplicitLines(t *testing.T) {
+	notice, err := New("ok", "one\ntwo\n\nthree", "bottom-left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := notice.DisplayMessage(); got != "one\ntwo\n\nthree" {
+		t.Fatalf("display message = %q", got)
+	}
+}
+
+func TestDisplayMessageSplitsLongWords(t *testing.T) {
+	notice, err := New("ok", strings.Repeat("界", MaxLineRunes+3), "bottom-left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(notice.DisplayMessage(), "\n")
+	if len(lines) != 2 || utf8.RuneCountInString(lines[0]) != MaxLineRunes {
+		t.Fatalf("wrapped long word = %#v", lines)
 	}
 }
 
@@ -136,7 +140,7 @@ func FuzzNewRemovesControlCharacters(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		notice, err := New("ok", input)
+		notice, err := New("ok", input, "bottom-left")
 		if err != nil {
 			return
 		}
@@ -149,27 +153,4 @@ func FuzzNewRemovesControlCharacters(f *testing.F) {
 			t.Fatalf("message contains an unnormalized control character: %q", notice.Message)
 		}
 	})
-}
-
-func TestRenderAndSize(t *testing.T) {
-	notice, err := New("error", "something failed")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rendered := notice.Render()
-	if !strings.Contains(rendered, "something failed") {
-		t.Fatalf("rendered notification does not contain message: %q", rendered)
-	}
-
-	columns, rows := notice.Size()
-	if columns != lipgloss.Width(rendered) {
-		t.Fatalf("columns = %d, want %d", columns, lipgloss.Width(rendered))
-	}
-	if rows != lipgloss.Height(rendered) || rows < 1 {
-		t.Fatalf("rows = %d, want %d and at least 1", rows, lipgloss.Height(rendered))
-	}
-	if strings.Contains(rendered, "╭") || strings.Contains(rendered, "╮") {
-		t.Fatalf("rendered notification has a border: %q", rendered)
-	}
 }

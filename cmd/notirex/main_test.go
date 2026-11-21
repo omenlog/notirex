@@ -3,57 +3,17 @@ package main
 import (
 	"bytes"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"notirex/internal/rexclient"
+	"notirex/internal/notification"
+
+	"github.com/egoist/mygo"
 )
 
-type fakeRex struct {
-	view         rexclient.View
-	size         rexclient.TerminalSize
-	sizes        map[string]rexclient.TerminalSize
-	inspectErr   error
-	sizeErr      error
-	closeErr     error
-	newErr       error
-	closedLayers []string
-	newRequest   rexclient.NewLayerRequest
-}
-
-func (r *fakeRex) Inspect(string) (rexclient.View, error) {
-	return r.view, r.inspectErr
-}
-
-func (r *fakeRex) Size(_ string, blockID string) (rexclient.TerminalSize, error) {
-	if r.sizeErr != nil {
-		return rexclient.TerminalSize{}, r.sizeErr
-	}
-	if size, ok := r.sizes[blockID]; ok {
-		return size, nil
-	}
-	return r.size, nil
-}
-
-func (r *fakeRex) CloseLayer(_ string, layerID string) error {
-	r.closedLayers = append(r.closedLayers, layerID)
-	return r.closeErr
-}
-
-func (r *fakeRex) NewLayer(_ string, request rexclient.NewLayerRequest) (rexclient.NewLayerResult, error) {
-	r.newRequest = request
-	if r.newErr != nil {
-		return rexclient.NewLayerResult{}, r.newErr
-	}
-	return rexclient.NewLayerResult{LayerID: "layer:new"}, nil
-}
-
-func testNewRex(string) rexAPI {
-	return &fakeRex{}
-}
-
-func TestAppDispatchesCommandsAndUsage(t *testing.T) {
+func TestAppUsageAndHelp(t *testing.T) {
+	show := func(notification.Notification, time.Duration) error { return nil }
 	tests := []struct {
 		name       string
 		args       []string
@@ -61,17 +21,18 @@ func TestAppDispatchesCommandsAndUsage(t *testing.T) {
 		wantOutput string
 		stdout     bool
 	}{
-		{name: "no command", wantStatus: 2, wantOutput: "usage:"},
+		{name: "no arguments", wantStatus: 2, wantOutput: "usage:"},
 		{name: "help", args: []string{"help"}, wantStatus: 0, wantOutput: "usage:", stdout: true},
 		{name: "short help", args: []string{"-h"}, wantStatus: 0, wantOutput: "usage:", stdout: true},
-		{name: "unknown", args: []string{"unknown"}, wantStatus: 2, wantOutput: "unknown command"},
+		{name: "long help", args: []string{"--help"}, wantStatus: 0, wantOutput: "usage:", stdout: true},
+		{name: "positional argument", args: []string{"unknown"}, wantStatus: 2, wantOutput: "unexpected positional arguments"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			status := app(test.args, &stdout, &stderr, testNewRex)
+			status := app(test.args, &stdout, &stderr, show)
 			if status != test.wantStatus {
 				t.Fatalf("status = %d, want %d", status, test.wantStatus)
 			}
@@ -86,431 +47,172 @@ func TestAppDispatchesCommandsAndUsage(t *testing.T) {
 	}
 }
 
-func TestUsageOnlyShowsPublicCommands(t *testing.T) {
-	var stdout bytes.Buffer
-	status := app([]string{"help"}, &stdout, &bytes.Buffer{}, testNewRex)
-	if status != 0 {
-		t.Fatalf("status = %d, want 0", status)
-	}
-	output := stdout.String()
-	if !strings.Contains(output, "notirex show") {
-		t.Fatalf("output = %q, want public show command", output)
-	}
-	if strings.Contains(output, "notirex render") {
-		t.Fatalf("output = %q, unexpectedly exposes render command", output)
-	}
-}
-
-func TestAppParsesShowOptionsAndInjectsRexClient(t *testing.T) {
-	rex := &fakeRex{view: rexclient.View{
-		ActiveWindowID: "window:1",
-		Windows:        []rexclient.Window{{WindowID: "window:1"}},
-	}}
-	var gotBinary string
-	newRex := func(binary string) rexAPI {
-		gotBinary = binary
-		return rex
+func TestAppParsesOptionsAndRunsNativeNotification(t *testing.T) {
+	var got notification.Notification
+	var duration time.Duration
+	show := func(notice notification.Notification, d time.Duration) error {
+		got, duration = notice, d
+		return nil
 	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	status := app([]string{
-		"show",
-		"--session", "session:1",
-		"--rex-bin", "/tmp/rex",
-		"--message", "saved",
+		"--kind", "warning",
+		"--message", "Tests were skipped",
+		"--position", "top-right",
 		"--duration", "3s",
-	}, &stdout, &stderr, newRex)
+	}, &stdout, &stderr, show)
 	if status != 0 {
 		t.Fatalf("status = %d, stderr = %q", status, stderr.String())
 	}
-	if gotBinary != "/tmp/rex" {
-		t.Fatalf("rex binary = %q, want /tmp/rex", gotBinary)
+	if got.Kind != notification.KindWarning || got.Message != "Tests were skipped" || got.Position != notification.TopRight {
+		t.Fatalf("notification = %+v", got)
 	}
-	if got := argumentValue(t, rex.newRequest.Arguments, "--message"); got != "saved" {
-		t.Fatalf("message = %q, want saved", got)
-	}
-	if got := argumentValue(t, rex.newRequest.Arguments, "--duration"); got != "3s" {
-		t.Fatalf("duration = %q, want 3s", got)
+	if duration != 3*time.Second {
+		t.Fatalf("duration = %s, want 3s", duration)
 	}
 }
 
-func TestShowCreatesLayerAndReplacesExistingNotification(t *testing.T) {
-	rex := &fakeRex{
-		view: rexclient.View{
-			ActiveWindowID: "window:1",
-			Windows: []rexclient.Window{{
-				WindowID:       "window:1",
-				FocusedBlockID: "block:1",
-				Layers: []rexclient.Layer{
-					{
-						Kind: "tiled",
-						Layout: &rexclient.Layout{
-							Rect:    []float64{0, 0, 1, 1},
-							BlockID: "block:1",
-						},
-					},
-					{
-						LayerID: "layer:old",
-						Kind:    "floating",
-						Blocks:  []rexclient.Block{{Label: notificationLabel}},
-					},
-				},
-			}},
-		},
-		size: rexclient.TerminalSize{Columns: 120, Rows: 40},
-	}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	status := runShow(options{
-		sessionID: "session:1",
-		blockID:   "block:1",
-		kind:      "ok",
-		message:   "saved",
-		duration:  defaultDuration,
-	}, &stdout, &stderr, rex)
-	if status != 0 {
-		t.Fatalf("status = %d, stderr = %q", status, stderr.String())
-	}
-	if len(rex.closedLayers) != 1 || rex.closedLayers[0] != "layer:old" {
-		t.Fatalf("closed layers = %#v", rex.closedLayers)
-	}
-	if rex.newRequest.WindowID != "window:1" || !filepath.IsAbs(rex.newRequest.Executable) {
-		t.Fatalf("new layer request = %+v", rex.newRequest)
-	}
-	if rex.newRequest.Arguments[0] != "render" {
-		t.Fatalf("renderer arguments = %#v", rex.newRequest.Arguments)
-	}
-	if got := argumentValue(t, rex.newRequest.Arguments, "--columns"); got != "11" {
-		t.Fatalf("renderer columns = %q, want 11", got)
-	}
-	if got := argumentValue(t, rex.newRequest.Arguments, "--rows"); got != "3" {
-		t.Fatalf("renderer rows = %q, want 3", got)
-	}
-	if got := argumentValue(t, rex.newRequest.Arguments, "--duration"); got != "2s" {
-		t.Fatalf("renderer duration = %q, want 2s", got)
-	}
-	if rex.newRequest.Bounds[0] <= 0.8 {
-		t.Fatalf("bounds = %#v, expected top-right placement", rex.newRequest.Bounds)
-	}
-	if !strings.Contains(stdout.String(), "layer:new") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestShowReportsRexFailures(t *testing.T) {
-	baseRex := func() *fakeRex {
-		return &fakeRex{
-			view: rexclient.View{
-				ActiveWindowID: "window:1",
-				Windows: []rexclient.Window{{
-					WindowID: "window:1",
-					Layers: []rexclient.Layer{{
-						Kind:   "tiled",
-						Layout: &rexclient.Layout{Rect: []float64{0, 0, 1, 1}, BlockID: "block:1"},
-					}},
-				}},
-			},
-			size: rexclient.TerminalSize{Columns: 120, Rows: 40},
-		}
-	}
-
+func TestAppReportsValidationAndRuntimeErrors(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*fakeRex)
-		want      string
+		name       string
+		args       []string
+		show       showNotification
+		wantStatus int
+		want       string
 	}{
 		{
-			name: "inspect",
-			configure: func(rex *fakeRex) {
-				rex.inspectErr = errors.New("inspect failed")
-			},
-			want: "inspect Rex session",
+			name:       "empty message",
+			args:       []string{"--message", "  "},
+			show:       func(notification.Notification, time.Duration) error { return nil },
+			wantStatus: 2,
+			want:       "message must not be empty",
 		},
 		{
-			name: "missing active window",
-			configure: func(rex *fakeRex) {
-				rex.view.ActiveWindowID = "missing"
-			},
-			want: "no active window",
+			name:       "invalid kind",
+			args:       []string{"--kind", "success", "--message", "saved"},
+			show:       func(notification.Notification, time.Duration) error { return nil },
+			wantStatus: 2,
+			want:       "kind must be one of",
 		},
 		{
-			name: "close old layer",
-			configure: func(rex *fakeRex) {
-				rex.view.Windows[0].Layers = append(rex.view.Windows[0].Layers, rexclient.Layer{
-					LayerID: "layer:old",
-					Kind:    "floating",
-					Blocks:  []rexclient.Block{{Label: notificationLabel}},
-				})
-				rex.closeErr = errors.New("close failed")
-			},
-			want: "close existing notification",
+			name:       "invalid position",
+			args:       []string{"--position", "center", "--message", "saved"},
+			show:       func(notification.Notification, time.Duration) error { return nil },
+			wantStatus: 2,
+			want:       "position must be one of",
 		},
 		{
-			name: "create layer",
-			configure: func(rex *fakeRex) {
-				rex.newErr = errors.New("create failed")
-			},
-			want: "create notification layer",
+			name:       "native app failure",
+			args:       []string{"--message", "saved"},
+			show:       func(notification.Notification, time.Duration) error { return errors.New("window failed") },
+			wantStatus: 1,
+			want:       "show notification: window failed",
 		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			rex := baseRex()
-			test.configure(rex)
-
-			var stdout bytes.Buffer
-			var stderr bytes.Buffer
-			status := runShow(options{
-				sessionID: "session:1",
-				kind:      "ok",
-				message:   "saved",
-				duration:  defaultDuration,
-			}, &stdout, &stderr, rex)
-			if status != 1 || !strings.Contains(stderr.String(), test.want) {
-				t.Fatalf("status = %d, stderr = %q, want text %q", status, stderr.String(), test.want)
-			}
-		})
-	}
-}
-
-func TestWindowGridIgnoresZoomedBlockSize(t *testing.T) {
-	rex := &fakeRex{sizes: map[string]rexclient.TerminalSize{
-		"block:left":  {Columns: 77, Rows: 29},
-		"block:right": {Columns: 141, Rows: 29},
-	}}
-	window := rexclient.Window{Layers: []rexclient.Layer{{
-		Kind: "tiled",
-		Layout: &rexclient.Layout{Split: &rexclient.Split{
-			Before: &rexclient.Layout{Rect: []float64{0, 0, 0.55, 1}, BlockID: "block:left"},
-			After:  &rexclient.Layout{Rect: []float64{0.55, 0, 0.45, 1}, BlockID: "block:right"},
-		}},
-	}}}
-
-	grid := windowGrid(rex, "session:1", window, "block:right")
-	if grid.columns != 140 || grid.rows != 29 {
-		t.Fatalf("grid = %+v, want 140x29", grid)
-	}
-}
-
-func TestFindBlockRectSearchesNestedLayouts(t *testing.T) {
-	want := []float64{0.5, 0, 0.5, 1}
-	window := rexclient.Window{Layers: []rexclient.Layer{{
-		Layout: &rexclient.Layout{Split: &rexclient.Split{
-			Before: &rexclient.Layout{Rect: []float64{0, 0, 0.5, 1}, BlockID: "block:left"},
-			After: &rexclient.Layout{Split: &rexclient.Split{
-				Before: &rexclient.Layout{Rect: want, BlockID: "block:target"},
-			}},
-		}},
-	}}}
-
-	got := findBlockRect(window, "block:target")
-	if len(got) != len(want) {
-		t.Fatalf("rect = %#v", got)
-	}
-	for index := range want {
-		if got[index] != want[index] {
-			t.Fatalf("rect = %#v, want %#v", got, want)
-		}
-	}
-	if got := findBlockRect(window, "missing"); got != nil {
-		t.Fatalf("missing rect = %#v", got)
-	}
-}
-
-func TestNotificationBoundsBalanceTrailingChrome(t *testing.T) {
-	bounds, columns, rows := notificationBounds(19, 3, grid{columns: 140, rows: 29})
-	if columns != 21 || rows != 5 {
-		t.Fatalf("renderer grid = %dx%d, want 21x5", columns, rows)
-	}
-	if bounds[2] != 21.0/140.0 || bounds[3] != 5.0/29.0 {
-		t.Fatalf("bounds = %#v, want a 21x5 layer", bounds)
-	}
-}
-
-func TestNotificationBoundsUseReferenceGridForInvalidInput(t *testing.T) {
-	bounds, columns, rows := notificationBounds(5, 1, grid{})
-	if columns != 9 || rows != 3 {
-		t.Fatalf("renderer grid = %dx%d, want 9x3", columns, rows)
-	}
-	if bounds[2] != 9.0/referenceColumns || bounds[3] != 3.0/referenceRows {
-		t.Fatalf("bounds = %#v", bounds)
-	}
-}
-
-func TestNotificationBoundsCentersSingleLineInMinimumPane(t *testing.T) {
-	bounds, columns, rows := notificationBounds(5, 1, grid{columns: 140, rows: 29})
-	if columns != 9 || rows != 3 {
-		t.Fatalf("renderer grid = %dx%d, want 9x3", columns, rows)
-	}
-	if bounds[2] != 9.0/140.0 || bounds[3] != 3.0/29.0 {
-		t.Fatalf("bounds = %#v, want a 9x3 layer", bounds)
-	}
-}
-
-func TestCenteredLayerCells(t *testing.T) {
-	tests := []struct {
-		name     string
-		content  int
-		minimum  int
-		chrome   int
-		expected int
-	}{
-		{name: "single row", content: 1, minimum: 3, chrome: 1, expected: 3},
-		{name: "two rows", content: 2, minimum: 3, chrome: 1, expected: 4},
-		{name: "minimum parity adjustment", content: 5, minimum: 8, chrome: 1, expected: 9},
-		{name: "minimum already balanced", content: 6, minimum: 8, chrome: 1, expected: 8},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := centeredLayerCells(test.content, test.minimum, test.chrome)
-			if got != test.expected {
-				t.Fatalf("centeredLayerCells(%d, %d, %d) = %d, want %d", test.content, test.minimum, test.chrome, got, test.expected)
-			}
-			if got < test.minimum || got-test.content < 2*test.chrome || (got-test.content)%2 != 0 {
-				t.Fatalf("result %d does not preserve minimum, chrome, and parity", got)
-			}
-		})
-	}
-}
-
-func TestWindowGridFallsBackWhenTerminalSizesAreUnusable(t *testing.T) {
-	rex := &fakeRex{view: rexclient.View{}, size: rexclient.TerminalSize{}}
-	window := rexclient.Window{Layers: []rexclient.Layer{{
-		Kind: "tiled",
-		Layout: &rexclient.Layout{
-			Rect:    []float64{0, 0, 1, 1},
-			BlockID: "block:1",
-		},
-	}}}
-
-	got := windowGrid(rex, "session:1", window, "block:1")
-	if got != (grid{columns: referenceColumns, rows: referenceRows}) {
-		t.Fatalf("grid = %+v, want reference grid", got)
-	}
-}
-
-func TestNotificationLayersFindsOnlyLabelledFloatingLayers(t *testing.T) {
-	view := rexclient.View{Windows: []rexclient.Window{{Layers: []rexclient.Layer{
-		{LayerID: "floating:match", Kind: "floating", Blocks: []rexclient.Block{{Label: notificationLabel}}},
-		{LayerID: "floating:other", Kind: "floating", Blocks: []rexclient.Block{{Label: "other"}}},
-		{LayerID: "tiled:match", Kind: "tiled", Blocks: []rexclient.Block{{Label: notificationLabel}}},
-	}}}}
-
-	got := notificationLayers(view)
-	if len(got) != 1 || got[0] != "floating:match" {
-		t.Fatalf("notification layers = %#v", got)
-	}
-}
-
-func TestParseRenderOptionsRejectInvalidDimensions(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{name: "columns only", args: []string{"--message", "saved", "--columns", "20"}},
-		{name: "rows only", args: []string{"--message", "saved", "--rows", "3"}},
-		{name: "negative", args: []string{"--message", "saved", "--columns", "-1", "--rows", "3"}},
-		{name: "positional argument", args: []string{"--message", "saved", "extra"}},
-		{name: "zero duration", args: []string{"--message", "saved", "--duration", "0s"}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			_, status := parseOptions("render", test.args, &stderr)
-			if status != 2 || stderr.Len() == 0 {
+			status := app(test.args, &bytes.Buffer{}, &stderr, test.show)
+			if status != test.wantStatus || !strings.Contains(stderr.String(), test.want) {
 				t.Fatalf("status = %d, stderr = %q", status, stderr.String())
 			}
 		})
 	}
 }
 
-func TestShowRequiresSession(t *testing.T) {
-	t.Setenv("REX_SESSION", "")
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	status := runShow(options{
-		kind:     "ok",
-		message:  "saved",
-		duration: defaultDuration,
-	}, &stdout, &stderr, &fakeRex{})
-	if status != 2 || !strings.Contains(stderr.String(), "no Rex session") {
-		t.Fatalf("status = %d, stderr = %q", status, stderr.String())
+func TestParseOptionsRejectsInvalidArguments(t *testing.T) {
+	tests := [][]string{
+		{"--message", "saved", "extra"},
+		{"--message", "saved", "--duration", "0s"},
+		{"--message", "saved", "--duration", "not-a-duration"},
 	}
-}
-
-func TestRenderRenders(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	status := app([]string{
-		"render",
-		"--kind", "ok",
-		"--message", "finished",
-		"--duration", "1ns",
-		"--columns", "20",
-		"--rows", "3",
-	}, &stdout, &stderr, testNewRex)
-	if status != 0 {
-		t.Fatalf("status = %d, stderr = %q", status, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "finished") {
-		t.Fatalf("output = %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "\x1b[?25l") || !strings.Contains(stdout.String(), "\x1b[?25h") {
-		t.Fatalf("cursor state was not managed: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "\x1b[?7l") || !strings.Contains(stdout.String(), "\x1b[?7h") {
-		t.Fatalf("automatic wrapping was not managed: %q", stdout.String())
-	}
-}
-
-func argumentValue(t *testing.T, arguments []string, name string) string {
-	t.Helper()
-	for index := 0; index+1 < len(arguments); index++ {
-		if arguments[index] == name {
-			return arguments[index+1]
+	for _, args := range tests {
+		if _, err := parseOptions(args); err == nil {
+			t.Fatalf("parseOptions(%#v) returned no error", args)
 		}
 	}
-	t.Fatalf("argument %q not found in %#v", name, arguments)
-	return ""
 }
 
-func TestRenderWithoutDimensionsStartsAtCurrentCursor(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	status := runRender([]string{
-		"--message", "finished",
-		"--duration", "1ns",
-	}, &stdout, &stderr)
-	if status != 0 {
-		t.Fatalf("status = %d, stderr = %q", status, stderr.String())
+func TestNotificationDimensions(t *testing.T) {
+	view := notificationView{notice: notification.Notification{Kind: notification.KindOK}}
+	width, height := view.getDimensions(100, 17)
+	if width != minimumWindowWidth || height != 41 {
+		t.Fatalf("compact dimensions = %dx%d, want %dx41", width, height, minimumWindowWidth)
 	}
-	if strings.Contains(stdout.String(), "\x1b[1;1H") {
-		t.Fatalf("unpositioned render contains a cursor-positioning sequence: %q", stdout.String())
+
+	width, height = view.getDimensions(maximumTextWidth, 61.2)
+	if width != 538 || height != 86 {
+		t.Fatalf("multiline dimensions = %dx%d, want 538x86", width, height)
 	}
-	if !strings.Contains(stdout.String(), "finished") {
-		t.Fatalf("output = %q", stdout.String())
+
+	view.notice.Kind = notification.KindNeutral
+	width, height = view.getDimensions(100, 17)
+	if width != 132 || height != 41 {
+		t.Fatalf("compact neutral dimensions = %dx%d, want 132x41", width, height)
+	}
+
+	width, height = view.getDimensions(maximumTextWidth, 61.2)
+	if width != 512 || height != 86 {
+		t.Fatalf("neutral dimensions = %dx%d, want 512x86", width, height)
 	}
 }
 
-func TestInvalidDurationFailsBeforeRendering(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	status := app([]string{
-		"render",
-		"--message", "finished",
-		"--duration", "0s",
-	}, &stdout, &stderr, testNewRex)
-	if status != 2 {
-		t.Fatalf("status = %d", status)
+func TestNotificationWindowSizeFitsWorkArea(t *testing.T) {
+	width, height := notificationWindowSize(mygo.Rectangle{Width: 200, Height: 100}, 380, 140)
+	if width != 200 || height != 100 {
+		t.Fatalf("size = %dx%d, want 200x100", width, height)
 	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q", stdout.String())
+}
+
+func TestNotificationPosition(t *testing.T) {
+	screen := mygo.Rectangle{X: 100, Y: 40, Width: 1200, Height: 800}
+	tests := []struct {
+		position notification.Position
+		wantX    int
+		wantY    int
+	}{
+		{position: notification.TopLeft, wantX: 120, wantY: 60},
+		{position: notification.TopRight, wantX: 900, wantY: 60},
+		{position: notification.BottomLeft, wantX: 120, wantY: 752},
+		{position: notification.BottomRight, wantX: 900, wantY: 752},
+	}
+
+	for _, test := range tests {
+		t.Run(string(test.position), func(t *testing.T) {
+			view := notificationView{
+				notice:   notification.Notification{Position: test.position},
+				workArea: screen,
+			}
+			x, y := view.getPosition(380, 68)
+			if x != test.wantX || y != test.wantY {
+				t.Fatalf("position = (%d, %d), want (%d, %d)", x, y, test.wantX, test.wantY)
+			}
+		})
+	}
+}
+
+func TestNotificationPositionKeepsWindowInsideSmallWorkArea(t *testing.T) {
+	screen := mygo.Rectangle{X: 10, Y: 20, Width: 200, Height: 100}
+	positions := []notification.Position{
+		notification.TopLeft,
+		notification.TopRight,
+		notification.BottomLeft,
+		notification.BottomRight,
+	}
+
+	for _, position := range positions {
+		t.Run(string(position), func(t *testing.T) {
+			view := notificationView{
+				notice:   notification.Notification{Position: position},
+				workArea: screen,
+			}
+			x, y := view.getPosition(380, 120)
+			if x != screen.X || y != screen.Y {
+				t.Fatalf("position = (%d, %d), want work-area origin (%d, %d)", x, y, screen.X, screen.Y)
+			}
+		})
 	}
 }

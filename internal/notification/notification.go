@@ -4,29 +4,36 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"unicode/utf8"
 )
 
 type Kind string
+type Position string
 
 const (
-	KindOK      Kind = "ok"
-	KindWarning Kind = "warning"
-	KindError   Kind = "error"
+	KindOK          Kind = "ok"
+	KindWarning     Kind = "warning"
+	KindError       Kind = "error"
+	KindNeutral     Kind = "neutral"
+	KindInformation Kind = "info"
 
-	maxMessageWidth = 72
+	TopLeft     Position = "top-left"
+	TopRight    Position = "top-right"
+	BottomLeft  Position = "bottom-left"
+	BottomRight Position = "bottom-right"
+
+	MaxLineRunes = 72
 )
 
 type Notification struct {
-	Kind    Kind
-	Message string
+	Kind     Kind
+	Message  string
+	Position Position
 }
 
-type appearance struct {
-	color string
-	icon  string
+type Appearance struct {
+	Color string
+	Icon  string
 }
 
 func ParseKind(value string) (Kind, error) {
@@ -37,13 +44,37 @@ func ParseKind(value string) (Kind, error) {
 		return KindWarning, nil
 	case KindError:
 		return KindError, nil
+	case KindNeutral:
+		return KindNeutral, nil
+	case KindInformation:
+		return KindInformation, nil
 	default:
-		return "", fmt.Errorf("kind must be one of: ok, warning, error")
+		return "", fmt.Errorf("kind must be one of: ok, warning, error, neutral, info")
 	}
 }
 
-func New(kindValue, messageValue string) (Notification, error) {
+func ParsePosition(value string) (Position, error) {
+	position := strings.ToLower(strings.TrimSpace(value))
+	switch Position(position) {
+	case TopLeft:
+		return TopLeft, nil
+	case TopRight:
+		return TopRight, nil
+	case BottomLeft:
+		return BottomLeft, nil
+	case BottomRight:
+		return BottomRight, nil
+	default:
+		return "", fmt.Errorf("position must be one of: top-left, top-right, bottom-left, bottom-right")
+	}
+}
+
+func New(kindValue, messageValue, positionValue string) (Notification, error) {
 	kind, err := ParseKind(kindValue)
+	if err != nil {
+		return Notification{}, err
+	}
+	position, err := ParsePosition(positionValue)
 	if err != nil {
 		return Notification{}, err
 	}
@@ -53,62 +84,42 @@ func New(kindValue, messageValue string) (Notification, error) {
 		return Notification{}, fmt.Errorf("message must not be empty")
 	}
 
-	return Notification{Kind: kind, Message: message}, nil
+	return Notification{Kind: kind, Message: message, Position: position}, nil
 }
 
-func (n Notification) Render() string {
-	look := appearances[n.Kind]
-	message := ansi.Wrap(n.Message, maxMessageWidth, " /_")
-	content := look.icon + " " + message
-
-	return lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(look.color)).
-		Padding(0, 1).
-		Render(content)
+func (n Notification) Appearance() Appearance {
+	return appearances[n.Kind]
 }
 
-func (n Notification) Size() (columns, rows int) {
-	rendered := n.Render()
-	return lipgloss.Width(rendered), lipgloss.Height(rendered)
-}
-
-// RenderCentered positions the padded notification in a terminal of the given
-// dimensions. Cursor positioning avoids printing a full rectangle of spaces,
-// which can wrap and scroll the message out of very small terminal panes.
-func (n Notification) RenderCentered(columns, rows int) string {
-	lines := strings.Split(n.Render(), "\n")
-	contentRows := len(lines)
-	if rows < contentRows {
-		rows = contentRows
+func (n Notification) DisplayMessage() string {
+	paragraphs := strings.Split(n.Message, "\n")
+	wrapped := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		wrapped = append(wrapped, wrapLine(paragraph, MaxLineRunes)...)
 	}
-
-	startRow := (rows-contentRows)/2 + 1
-	var centered strings.Builder
-	for index, line := range lines {
-		lineColumns := lipgloss.Width(line)
-		availableColumns := columns
-		if availableColumns < lineColumns {
-			availableColumns = lineColumns
-		}
-		startColumn := (availableColumns-lineColumns)/2 + 1
-		fmt.Fprintf(&centered, "\x1b[%d;%dH%s", startRow+index, startColumn, line)
-	}
-	return centered.String()
+	return strings.Join(wrapped, "\n")
 }
 
-var appearances = map[Kind]appearance{
+var appearances = map[Kind]Appearance{
 	KindOK: {
-		color: "#22C55E",
-		icon:  "✓",
+		Color: "#22C55E",
+		Icon:  "✓",
 	},
 	KindWarning: {
-		color: "#EAB308",
-		icon:  "!",
+		Color: "#EAB308",
+		Icon:  "!",
 	},
 	KindError: {
-		color: "#EF4444",
-		icon:  "✕",
+		Color: "#EF4444",
+		Icon:  "✕",
+	},
+	KindNeutral: {
+		Color: "#FFFFFF",
+		Icon:  "",
+	},
+	KindInformation: {
+		Color: "#3767ff",
+		Icon:  "i",
 	},
 }
 
@@ -129,4 +140,49 @@ func cleanMessage(value string) string {
 	}
 
 	return strings.TrimSpace(cleaned.String())
+}
+
+func wrapLine(line string, limit int) []string {
+	if line == "" {
+		return []string{""}
+	}
+	if utf8.RuneCountInString(line) <= limit {
+		return []string{line}
+	}
+
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	var lines []string
+	var current strings.Builder
+	for _, word := range words {
+		for utf8.RuneCountInString(word) > limit {
+			if current.Len() > 0 {
+				lines = append(lines, current.String())
+				current.Reset()
+			}
+			runes := []rune(word)
+			lines = append(lines, string(runes[:limit]))
+			word = string(runes[limit:])
+		}
+
+		separator := 0
+		if current.Len() > 0 {
+			separator = 1
+		}
+		if utf8.RuneCountInString(current.String())+separator+utf8.RuneCountInString(word) > limit {
+			lines = append(lines, current.String())
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteByte(' ')
+		}
+		current.WriteString(word)
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	return lines
 }

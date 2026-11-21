@@ -1,32 +1,35 @@
 # notirex
 
-`notirex` is a standalone executable for short-lived Rex notifications. It
-creates a non-focused floating pane at the top right of the active Rex window,
-renders a message, waits for its duration, and exits. A new notification
-replaces any existing `notirex` pane in the same session.
+`notirex` is a standalone executable for short-lived native desktop
+notifications. It opens a small MyGo window in a requested corner of the
+current display, shows the message for its requested duration, and exits.
 
-It does not require a Rex `init.lua` module, custom action, or configuration
-reload. The executable invokes the public `rex` CLI and server API directly.
+The notification is no longer rendered inside a Rex floating pane. It does not
+invoke the `rex` CLI, create a terminal, or require Lip Gloss. Rex can still be
+the consumer that launches `notirex`, but the notification itself is an
+independent native application.
 
 ## Behavior
 
 | Property | Value |
 | --- | --- |
-| Kinds | `ok`, `warning`, `error` |
+| Kinds | `ok`, `warning`, `error`, `neutral`, `info` |
 | Default duration | `2s` |
-| Focus | Never takes focus |
-| Placement | Top right of the active Rex window, with a 2% top/right margin |
-| Message wrapping | 72 terminal cells |
-| Replacement | One notification per session |
+| Focus | Shown inactive and does not accept mouse input |
+| Placement | `bottom-right` by default; all four display corners are supported on the display containing the pointer |
+| Appearance | Frameless native MyGo panel with platform vibrancy when available |
+| Desktop integration | Hidden from the Dock, app switcher, and taskbar |
 
-The renderer uses Lip Gloss for colored, padded text and does not draw a border.
-Rex provides the pane border.
+Messages may contain newlines. Tabs become four spaces, other control
+characters are removed, and long lines are wrapped before they are displayed.
 
 ## Requirements
 
-- The `rex` CLI must be installed and able to connect to the target Rex server.
-- `rex` must be available through `PATH`, or `NOTIREX_REX_BIN` must point to it.
-- The target session must be supplied through `--session` or `REX_SESSION`.
+- macOS is currently supported by the published releases.
+- Building from source requires Go 1.27.3 or newer. With Go's default
+  `GOTOOLCHAIN=auto`, the required toolchain is downloaded automatically.
+
+Rex is not required to run `notirex`.
 
 ## Install
 
@@ -43,8 +46,8 @@ pass its version to the installer:
 curl -fsSL https://raw.githubusercontent.com/omenlog/notirex/main/install.sh | sh -s -- v0.1.0
 ```
 
-Set `NOTIREX_INSTALL_DIR` to install elsewhere. Releases currently support
-Apple Silicon and Intel Macs.
+Set `NOTIREX_INSTALL_DIR` to install elsewhere. Releases support Apple Silicon
+and Intel Macs.
 
 ## Update
 
@@ -65,103 +68,26 @@ make build
 
 The executable is written to `bin/notirex`.
 
-## Releases
-
-GoReleaser publishes a GitHub release whenever a tag beginning with `v` is
-pushed. Release tags should use semantic versions, for example:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The GitHub Actions release workflow runs the test suite, builds `notirex` for
-macOS on both Intel (AMD64) and Apple Silicon (ARM64), and uploads compressed
-archives plus a `checksums.txt` file to the matching GitHub release. GoReleaser
-does not need to be installed or run locally.
-
 ## Usage
 
-From a terminal inside Rex, session and block context are read from
-`REX_SESSION` and `REX_BLOCK`:
-
 ```sh
-./bin/notirex show --message "Build completed"
-./bin/notirex show --kind warning --message "Tests were skipped" --duration 4s
-./bin/notirex show --kind error --message "Deployment failed"
+./bin/notirex --message "Build completed"
+./bin/notirex --kind warning --message "Tests were skipped" --duration 4s
+./bin/notirex --kind error --message "Deployment failed"
+./bin/notirex --position top-left --message "Build started"
 ```
 
-From another process, pass the target explicitly:
+Use `--help` to show the full command usage.
 
-```sh
-./bin/notirex show \
-  --session "session:..." \
-  --block "block:..." \
-  --kind ok \
-  --message "Build completed"
-```
+## Rex integration
 
-`--block` is optional. It provides a reference terminal for calculating the
-active window's cell grid. If it is omitted or is not in the active window,
-`notirex` uses that window's focused terminal. It falls back to a conservative
-`120x40` grid when no usable terminal size is available.
-
-Successful creation prints the layer information as JSON:
-
-```json
-{"kind":"ok","layer_id":"layer:..."}
-```
-
-### Environment variables
-
-| Variable | Purpose |
-| --- | --- |
-| `REX_SESSION` | Default target session |
-| `REX_BLOCK` | Default reference terminal block |
-| `NOTIREX_REX_BIN` | Alternative path to the `rex` executable |
-
-## How it works
-
-`notirex show` performs the complete integration itself:
-
-1. Inspects the target session with `rex session inspect`.
-2. Finds the session's active window and a reference terminal block.
-3. Measures the rendered notification in terminal cells.
-4. Converts those cells into Rex's normalized floating-layer bounds.
-5. Closes any existing floating layer containing a block labelled `notirex`.
-6. Calls `session.new_layer` through `rex api call`.
-7. Starts `notirex render` inside the new terminal layer.
-
-The creator passes the calculated layer grid to the renderer, which centers each
-line using cursor positioning. It deliberately avoids querying the terminal at
-startup because Rex may still report a provisional size while attaching the
-client. Automatic terminal wrapping is disabled while drawing so a padded line
-ending in the bottom-right cell cannot scroll the centered message upward. It
-also avoids printing a rectangle of spaces for the same reason.
-
-Rex reserves the last column and row of a floating layer for chrome while
-keeping that space visible in the pane. The bounds calculation balances those
-trailing cells with one terminal cell at the left and top. Layer dimensions are
-kept the same parity as the rendered content so centering lands on whole cells:
-
-```text
-layer columns = max(measured columns + 2, 8), parity-adjusted
-layer rows    = max(measured rows + 2, 3), parity-adjusted
-width  = clamp(layer columns / window columns, 8 / window columns, 0.72)
-height = clamp(layer rows    / window rows,    3 / window rows,    0.40)
-```
-
-## Consumer integration
-
-Consumers invoke the executable rather than importing Lua. For example, a Rex
-custom action can run:
+A Rex custom action can launch the executable directly. No session or block
+identifier is needed because the native notification is positioned using the
+desktop display rather than Rex's pane layout:
 
 ```lua
 rex.exec({
   "/path/to/notirex",
-  "show",
-  "--session", ctx.session_id,
-  "--block", ctx.block_id,
   "--kind", "ok",
   "--message", "Saved",
 })
@@ -169,11 +95,28 @@ rex.exec({
 
 Defining an action or key binding is optional and belongs to the consumer.
 
-## Internal rendering
+## Architecture
 
-The `render` subcommand is an internal entry point launched in the floating
-terminal by `show`.
+`notirex` performs the complete lifecycle in one process:
 
-Messages may contain newlines and are wrapped at 72 terminal cells. Tabs become
-four spaces, and other control characters are removed so message text cannot
-inject terminal escape sequences.
+1. Validates and sanitizes the notification kind, message, and position.
+2. Starts a MyGo application without a Dock icon.
+3. Finds the display nearest the pointer and positions a frameless panel in its
+   requested work-area corner (`bottom-right` by default).
+4. Shows the native UI without focusing it or intercepting mouse input.
+5. Closes the window after `--duration`; the application then exits.
+
+The native view uses MyGo's GPU-rendered Go UI and does not include a webview.
+
+## Releases
+
+GoReleaser publishes a GitHub release whenever a tag beginning with `v` is
+pushed. Release tags should use semantic versions, for example:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow runs the tests and builds macOS archives for Intel and
+Apple Silicon, plus `checksums.txt`.
