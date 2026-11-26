@@ -1,28 +1,26 @@
 # notirex
 
 `notirex` is a standalone executable for short-lived native desktop
-notifications. It opens a small MyGo window in a requested corner of the
+notifications. It opens a small window in a requested corner of the
 current display, shows the message for its requested duration, and exits.
-
-The notification is no longer rendered inside a Rex floating pane. It does not
-invoke the `rex` CLI, create a terminal, or require Lip Gloss. Rex can still be
-the consumer that launches `notirex`, but the notification itself is an
-independent native application.
 
 ## Showcase
 
 https://github.com/user-attachments/assets/e778221d-89d0-4634-8d20-469bef8939ed
 
-## Behavior
+## Options
 
-| Property | Value |
-| --- | --- |
-| Kinds | `ok`, `warning`, `error`, `neutral`, `info` |
-| Default duration | `2s` |
-| Focus | Shown inactive and does not accept mouse input |
-| Placement | `bottom-right` by default; all four display corners are supported on the display containing the pointer |
-| Appearance | Frameless native MyGo panel with platform vibrancy when available |
-| Desktop integration | Hidden from the Dock, app switcher, and taskbar |
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--message` | Notification text (required) | — |
+| `--kind` | `ok`, `warning`, `error`, `neutral`, or `info` | `ok` |
+| `--duration` | How long to show the notification | `2s` |
+| `--position` | `top-left`, `top-right`, `bottom-left`, or `bottom-right` | `bottom-right` |
+
+The notification is always ignores mouse input. It appears
+in the requested work-area corner of the display nearest the pointer, as a
+frameless native panel with HUD vibrancy. It is hidden from the Dock and
+app switcher.
 
 Messages may contain newlines. Tabs become four spaces, other control
 characters are removed, and long lines are wrapped before they are displayed.
@@ -82,22 +80,6 @@ The executable is written to `bin/notirex`.
 ```
 
 Use `--help` to show the full command usage.
-
-## Rex integration
-
-A Rex custom action can launch the executable directly. No session or block
-identifier is needed because the native notification is positioned using the
-desktop display rather than Rex's pane layout:
-
-```lua
-rex.exec({
-  "/path/to/notirex",
-  "--kind", "ok",
-  "--message", "Saved",
-})
-```
-
-Defining an action or key binding is optional and belongs to the consumer.
 
 ## Architecture
 
